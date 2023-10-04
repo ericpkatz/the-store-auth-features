@@ -1,5 +1,5 @@
 const pg = require('pg');
-const client = new pg.Client(process.env.DATABASE_URL || 'postgres://localhost/the_store_auth_db');
+const client = new pg.Client(process.env.DATABASE_URL || 'postgres://localhost/the_store_auth_features_db');
 const { v4 } = require('uuid');
 const uuidv4 = v4;
 const bcrypt = require('bcrypt');
@@ -134,6 +134,14 @@ const updateLineItem = async(lineItem)=> {
   return response.rows[0];
 };
 
+const createFavorite = async(favorite)=> {
+  const SQL = `
+  INSERT INTO favorites (product_id, user_id, id) VALUES($1, $2, $3) RETURNING *
+`;
+ response = await client.query(SQL, [ favorite.product_id, favorite.user_id, uuidv4()]);
+  return response.rows[0];
+};
+
 const createLineItem = async(lineItem)=> {
   await ensureCart(lineItem);
   const SQL = `
@@ -151,6 +159,15 @@ const deleteLineItem = async(lineItem)=> {
   `;
   await client.query(SQL, [lineItem.id]);
 };
+
+const deleteFavorite = async(favorite)=> {
+  const SQL = `
+    DELETE from favorites 
+    WHERE id = $1 AND user_id = $2
+  `;
+  await client.query(SQL, [favorite.id, favorite.user_id]);
+};
+
 
 const updateOrder = async(order)=> {
   const SQL = `
@@ -180,8 +197,18 @@ const fetchOrders = async(userId)=> {
   return response.rows;
 };
 
+const fetchFavorites = async(userId)=> {
+  const SQL = `
+    SELECT * FROM favorites
+    WHERE user_id = $1
+  `;
+  const response = await client.query(SQL, [ userId ]);
+  return response.rows;
+};
+
 const seed = async()=> {
   const SQL = `
+    DROP TABLE IF EXISTS favorites;
     DROP TABLE IF EXISTS line_items;
     DROP TABLE IF EXISTS products;
     DROP TABLE IF EXISTS orders;
@@ -217,6 +244,14 @@ const seed = async()=> {
       CONSTRAINT product_and_order_key UNIQUE(product_id, order_id)
     );
 
+    CREATE TABLE favorites(
+      id UUID PRIMARY KEY,
+      created_at TIMESTAMP DEFAULT now(),
+      product_id UUID REFERENCES products(id) NOT NULL,
+      user_id UUID REFERENCES users(id) NOT NULL,
+      CONSTRAINT product_and_user_key UNIQUE(product_id, user_id)
+    );
+
   `;
   await client.query(SQL);
 
@@ -231,6 +266,11 @@ const seed = async()=> {
     createProduct({ name: 'bazz' }),
     createProduct({ name: 'quq' }),
   ]);
+  await Promise.all([
+    createFavorite({ user_id: ethyl.id, product_id: foo.id }),
+    createFavorite({ user_id: ethyl.id, product_id: bar.id }),
+    createFavorite({ user_id: moe.id, product_id: foo.id })
+  ]);
   let orders = await fetchOrders(ethyl.id);
   let cart = orders.find(order => order.is_cart);
   let lineItem = await createLineItem({ order_id: cart.id, product_id: foo.id});
@@ -244,10 +284,13 @@ const seed = async()=> {
 module.exports = {
   fetchProducts,
   fetchOrders,
+  fetchFavorites,
   fetchLineItems,
   createLineItem,
+  createFavorite,
   updateLineItem,
   deleteLineItem,
+  deleteFavorite,
   updateOrder,
   authenticate,
   findUserByToken,
